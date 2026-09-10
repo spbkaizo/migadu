@@ -67,8 +67,12 @@ Server settings, if your mail app asks for them:
   IMAP   imap.migadu.com   port 993   TLS
   SMTP   smtp.migadu.com   port 465   TLS
 
-Use your full email address as the username for both. One password covers mail
-and webmail -- there is no separate "app password".
+Calendars and contacts, if you want them on your phone or laptop:
+
+  CalDAV / CardDAV   https://cdav.migadu.com   port 443   TLS
+
+Use your full email address as the username everywhere. One password covers
+mail, calendars, contacts and webmail -- there is no separate "app password".
 
 Webmail:  https://webmail.migadu.com
 

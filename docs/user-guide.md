@@ -35,6 +35,7 @@ in case a screen asks for something unexpected.
 |---|---|---|---|
 | **Incoming (IMAP)** | `imap.migadu.com` | 993 | SSL/TLS |
 | **Outgoing (SMTP)** | `smtp.migadu.com` | 465 | SSL/TLS |
+| **Calendars and contacts** | `https://cdav.migadu.com` | 443 | SSL/TLS |
 
 Username: **your full email address**
 Password: **your mail password**
@@ -142,6 +143,55 @@ If your Outlook looks different and says "New Outlook" with a toggle in the
 corner, the steps are similar but under **Settings** (the gear icon) →
 **Accounts** → **Add account**. Choose **IMAP** if asked, and use the same
 servers, ports and encryption as above.
+
+---
+
+## Calendars and contacts
+
+Optional, and separate from mail. Your mailbox comes with a calendar and an
+address book that sync across your devices, using the same address and
+password. Set this up only if you want it.
+
+### iPhone and iPad
+
+1. Open **Settings**
+2. Scroll to **Apps** → **Calendar** (on older iOS: **Calendar** directly)
+3. Tap **Calendar Accounts** → **Add Account** → **Other**
+4. Tap **Add CalDAV Account**
+5. Fill in:
+   - Server: `cdav.migadu.com`
+   - User Name: your full email address
+   - Password: your mail password
+   - Description: anything you like, e.g. `Calendar`
+6. Tap **Next**
+
+For contacts, repeat from step 1 but choose **Contacts** instead of
+**Calendar**, and **Add CardDAV Account** instead of CalDAV. Same server, same
+username, same password.
+
+### Thunderbird
+
+**Calendar:** go to the calendar tab, right-click in the calendar list on the
+left, choose **New Calendar** → **On the Network**. Enter your email address as
+the username and `https://cdav.migadu.com` as the location, then **Find
+Calendars** and sign in.
+
+**Contacts:** open the address book, then **File** → **New** → **CardDAV
+Address Book**. Use the same username and location.
+
+### Android
+
+Android has no built-in CalDAV support. You need an app from the Play Store —
+**DAVx⁵** is the usual choice. Add an account with `https://cdav.migadu.com`,
+your full email address and your mail password, and it will find your calendar
+and contacts.
+
+### macOS
+
+**System Settings** → **Internet Accounts** → **Add Other Account** → **CalDAV
+account**. Choose **Manual**, then enter your email address, password, and
+`cdav.migadu.com` as the server address. Repeat with **CardDAV account** for
+contacts.
 
 ---
 
