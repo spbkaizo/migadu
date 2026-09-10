@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Show the current state of a Migadu mailbox: folders, filters, usage."""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from migadu import admin, creds, imap, sieve
+
+
+def human(n):
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}TB"
+
+
+def main():
+    user, password = creds.imap()
+    print(f"mailbox: {user}\n")
+
+    M = imap.connect(user, password)
+    try:
+        cnt = imap.counts(M)
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+    print("FOLDERS")
+    for name in sorted(cnt, key=lambda x: (x != "INBOX", x)):
+        print(f"  {name:34} {cnt[name] if cnt[name] is not None else '-':>7}")
+
+    print("\nFILTERS")
+    s = sieve.Sieve()
+    try:
+        s.login()
+        for line in s.listscripts():
+            line = line.strip()
+            if line.startswith('"'):
+                print(f"  {line}")
+    finally:
+        s.logout()
+
+    print("\nDOMAINS")
+    try:
+        a = admin.Admin()
+    except admin.NotConfigured as e:
+        print(f"  (admin API not configured -- {e})")
+        return
+
+    try:
+        domains = a.domains().get("domains", [])
+    except RuntimeError as e:
+        print(f"  (query failed: {e})")
+        return
+
+    print(f"  {'domain':22} {'state':10} {'storage':>9} {'in':>6} {'out':>6}")
+    for d in sorted(domains, key=lambda x: x["name"]):
+        name = d["name"]
+        state = d.get("state", "?")
+        # An inactive domain neither sends nor receives; say so loudly, since
+        # it looks like a working domain everywhere else.
+        label = state.upper() if state != "active" else state
+        try:
+            u = a.usage(name)
+            storage = human(u.get("storage", 0))
+            incoming = u.get("incoming", 0)
+            outgoing = u.get("outgoing", 0)
+        except RuntimeError:
+            storage = incoming = outgoing = "-"
+        print(f"  {name:22} {label:10} {storage:>9} {incoming:>6} {outgoing:>6}")
+
+
+if __name__ == "__main__":
+    main()

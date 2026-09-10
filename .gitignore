@@ -1,0 +1,38 @@
+# Credentials -- never commit
+.migadu-secret
+*-secret
+!.migadu-secret.example
+*.secret
+*credentials*
+*token*.json
+.env
+
+# Personal data produced by the migration tooling.
+# These contain real correspondent addresses, Message-IDs and folder contents.
+# This is a public repository: do not relax these patterns.
+classification-report.txt
+survey.txt
+*.log
+.upload-state.json
+.download-state.json
+*-state.json
+
+# Personal filter rules. These name real correspondent domains -- solicitor,
+# GP surgery, school, insurers -- and personal addresses. This is a public
+# repository: never commit them.
+#
+# Mailbox directories are named for the full address, so this pattern catches
+# every real mailbox while leaving mailboxes/example/ tracked as the starting
+# point for a new one.
+mailboxes/*@*/
+
+# Mail data
+mail-archive/
+*.mbox
+*.tar.gz
+
+__pycache__/
+*.pyc
+.DS_Store
+*/.DS_Store
+.vscode

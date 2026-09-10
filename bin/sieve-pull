@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Fetch the server's filter script and compare it with the local copy.
+
+    bin/sieve-pull <mailbox> [--script NAME] [--write]
+
+<mailbox> is a full address, or a bare local part when that is unambiguous
+across the account's domains.
+
+Without --write this only reports whether local and server agree, which is the
+check to run before editing rules -- the webmail can replace the active script
+without warning.
+"""
+
+import argparse
+import difflib
+import re
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from migadu import creds, mailbox, sieve
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mailbox")
+    ap.add_argument("--script", default="custom")
+    ap.add_argument("--write", action="store_true", help="overwrite the local file")
+    args = ap.parse_args()
+
+    try:
+        address, _, _ = mailbox.resolve(args.mailbox)
+    except (mailbox.Ambiguous, mailbox.Unknown) as e:
+        raise SystemExit(str(e))
+
+    operator, _ = creds.imap()
+    if operator != address:
+        raise SystemExit(
+            f"credentials are for {operator}, not {address}.\n"
+            f"Supply that mailbox's own password, e.g.\n"
+            f"  MIGADU_USER={address} MIGADU_PASS='...' {sys.argv[0]} {args.mailbox}"
+        )
+
+    s = sieve.Sieve()
+    try:
+        s.login()
+        lines = s.getscript(args.script)
+    finally:
+        s.logout()
+
+    # GETSCRIPT returns a literal-size marker ({NNN}) followed by the script
+    # body and a final OK. Drop both wrappers.
+    body = "\n".join(
+        l
+        for l in lines
+        if not l.startswith(("OK", "NO", "BYE")) and not re.fullmatch(r"\{\d+\+?\}", l.strip())
+    )
+    body = body.strip("\n") + "\n"
+
+    path = mailbox.filters_path(address)
+    local = open(path).read() if os.path.exists(path) else ""
+
+    if local.strip() == body.strip():
+        print(f"in sync: {path}")
+        return
+
+    print(f"DIFFERS from {path}\n")
+    for line in difflib.unified_diff(
+        local.splitlines(), body.splitlines(), "local", "server", lineterm=""
+    ):
+        print(f"  {line}")
+
+    if args.write:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(body)
+        print(f"\nwrote server version to {path}")
+    else:
+        print("\nre-run with --write to overwrite the local copy")
+
+
+if __name__ == "__main__":
+    main()

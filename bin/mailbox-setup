@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Send a mailbox its connection settings, optionally setting the password.
+
+    bin/mailbox-setup <mailbox> --invite --recovery <address>
+    bin/mailbox-setup <mailbox> --send-password --to <address>
+    bin/mailbox-setup <mailbox> --settings-only --to <address>
+
+Three modes, in descending order of safety:
+
+  --invite         Migadu emails an invitation; the user picks their own
+                   password. Nothing secret passes through this tooling.
+  --settings-only  Send connection settings to an address. Changes nothing.
+  --send-password  Generate a password, set it, and email it. This CHANGES a
+                   live password and puts it in a mailbox in plaintext, so it
+                   requires typing the mailbox name to confirm.
+
+The domain comes from the credentials in use; nothing is hardcoded.
+"""
+
+import argparse
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from migadu import admin, creds, mailbox, notify
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mailbox", help="full address, or a local part if unambiguous")
+    ap.add_argument("--domain", help="disambiguate a bare local part")
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--invite", action="store_true", help="user sets own password")
+    mode.add_argument("--send-password", action="store_true", help="generate, set and email a password")
+    mode.add_argument("--settings-only", action="store_true", help="send settings, change nothing")
+    ap.add_argument("--recovery", help="external address for --invite")
+    ap.add_argument("--to", help="where to send settings (default: the mailbox itself)")
+    ap.add_argument("--length", type=int, default=24)
+    ap.add_argument("--no-guide", action="store_true", help="omit the inline setup guide")
+    ap.add_argument("--no-pdf", action="store_true", help="omit the PDF attachment")
+    ap.add_argument("--dry-run", action="store_true", help="show what would happen")
+    args = ap.parse_args()
+
+    if args.invite and not args.recovery:
+        raise SystemExit("--invite needs --recovery <external address>")
+
+    a = admin.Admin()
+
+    # Resolve against the live account, so a local part present in several
+    # domains is rejected rather than silently resolved to the wrong one.
+    try:
+        address, local, domain = mailbox.resolve(
+            args.mailbox, admin=a, default_domain=args.domain
+        )
+    except (mailbox.Ambiguous, mailbox.Unknown) as e:
+        raise SystemExit(str(e))
+
+    # Fail early with a clear message rather than a 404 from a later write.
+    try:
+        a.mailbox(domain, local)
+    except RuntimeError as e:
+        raise SystemExit(f"no such mailbox {address}: {e}")
+
+    destination = args.to or (args.recovery if args.invite else address)
+
+    if args.dry_run:
+        action = (
+            f"invite via {args.recovery}" if args.invite
+            else "set a new password" if args.send_password
+            else "no change"
+        )
+        print(f"would: {action}\n       email settings to {destination}")
+        return
+
+    password = None
+
+    if args.invite:
+        # Migadu only sends invitations for mailboxes created with
+        # password_method=invitation. On an existing mailbox this stores the
+        # recovery address and deactivates it, but sends nothing.
+        print(
+            f"WARNING: Migadu does not send invitation email for an existing\n"
+            f"mailbox. This will set {address} to inactive with no way in.\n"
+            f"Use --send-password instead, or Migadu's webmail password reset."
+        )
+        if input("Type 'yes' to proceed anyway: ").strip() != "yes":
+            raise SystemExit("aborted")
+        a.invite(domain, local, args.recovery)
+        print(f"invitation fields set on {address} (no email sent)")
+
+    elif args.send_password:
+        # Changing a live password locks out whoever is using it. Make the
+        # operator name the mailbox rather than confirming a bare y/n.
+        print(f"This resets the password for {address} and emails it to {destination}.")
+        if input(f"Type '{address}' to confirm: ").strip() != address:
+            raise SystemExit("aborted")
+        password = notify.generate_password(args.length)
+        a.set_password(domain, local, password)
+        print(f"password set for {address}")
+
+    msg = notify.build(
+        address,
+        password=password,
+        invited=args.invite,
+        guide=not args.no_guide,
+        pdf=not args.no_pdf,
+    )
+    attached = any(p.get_filename() for p in msg.walk())
+    if not args.no_pdf and not attached:
+        print("warning: PDF could not be generated; the guide is inline only")
+    notify.send(destination, msg)
+    print(f"settings sent to {destination}" + (" (with PDF)" if attached else ""))
+
+
+if __name__ == "__main__":
+    main()

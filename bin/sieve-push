@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Validate, upload and activate a mailbox's filter rules.
+
+    bin/sieve-push <mailbox> [--script NAME] [--dry-run]
+
+<mailbox> is a full address, or a bare local part when that is unambiguous
+across the account's domains. Reads mailboxes/<address>/filters.sieve.
+
+Always CHECKSCRIPTs before storing -- the server catches syntax and
+missing-require errors that would otherwise silently break mail filing.
+"""
+
+import argparse
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from migadu import creds, mailbox, sieve
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mailbox")
+    ap.add_argument("--script", default="custom", help="server-side script name")
+    ap.add_argument("--dry-run", action="store_true", help="validate only")
+    args = ap.parse_args()
+
+    try:
+        address, _, _ = mailbox.resolve(args.mailbox)
+    except (mailbox.Ambiguous, mailbox.Unknown) as e:
+        raise SystemExit(str(e))
+
+    path = mailbox.filters_path(address)
+    if not os.path.exists(path):
+        raise SystemExit(f"no filters at {path}")
+    body = open(path).read()
+    print(f"{address}\n{path}  ({len(body)} bytes)")
+
+    # ManageSieve acts on whichever mailbox authenticates, so pushing another
+    # mailbox's rules needs that mailbox's own credentials. Refuse rather than
+    # silently write these rules onto the wrong account.
+    operator, _ = creds.imap()
+    if operator != address:
+        raise SystemExit(
+            f"credentials are for {operator}, not {address}.\n"
+            f"Supply that mailbox's own password, e.g.\n"
+            f"  MIGADU_USER={address} MIGADU_PASS='...' {sys.argv[0]} {args.mailbox}"
+        )
+
+    s = sieve.Sieve()
+    try:
+        s.login()
+
+        r = s.checkscript(body)
+        status = r[-1] if r else ""
+        print(f"  validate: {status}")
+        if not status.startswith("OK"):
+            raise SystemExit("validation failed -- not uploading")
+        if args.dry_run:
+            print("  dry run, stopping here")
+            return
+
+        print(f"  store   : {s.putscript(args.script, body)[-1]}")
+        print(f"  activate: {s.setactive(args.script)[-1]}")
+
+        for line in s.listscripts():
+            if "ACTIVE" in line:
+                print(f"  active  : {line.strip()}")
+    finally:
+        s.logout()
+
+
+if __name__ == "__main__":
+    main()
