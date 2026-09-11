@@ -12,6 +12,8 @@ Python 3, standard library only. No dependencies to install.
 - Filter rules as version-controlled Sieve files, validated server-side before
   they go live
 - Folder and message-count overview
+- Per-device credentials via Migadu identities — issue one per client, revoke
+  it alone when a device is lost
 - Read-only queries against Migadu's admin API — mailboxes, aliases,
   identities, rewrites, and real storage usage
 
@@ -69,8 +71,11 @@ Two different secrets:
 The API key comes from My Account → API Keys and is **not** your mailbox
 password. Everything except `bin/status`'s usage section works without it.
 
-Migadu has no "app password" concept — one mailbox password serves IMAP, SMTP,
-POP3 and webmail.
+Migadu has no "app password" concept by that name — one mailbox password serves
+IMAP, SMTP, POP3 and webmail. *Identities* fill that role: each has its own
+password and its own per-protocol permissions, so a leaked device credential is
+revoked on its own. See
+[`docs/migadu-facts.md`](docs/migadu-facts.md#identities).
 
 ## A warning about the webmail
 

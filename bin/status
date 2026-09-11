@@ -74,6 +74,26 @@ def main():
             storage = incoming = outgoing = "-"
         print(f"  {name:22} {label:10} {storage:>9} {incoming:>6} {outgoing:>6}")
 
+    # Identities belong to a mailbox, not a domain, so only the authenticated
+    # one is reported here. Use bin/identity for any other mailbox.
+    local, _, mydomain = user.partition("@")
+    print(f"\nIDENTITIES ({user})")
+    try:
+        items = a.identities(mydomain, local).get("identities", [])
+    except RuntimeError as e:
+        print(f"  (query failed: {e})")
+        return
+
+    if not items:
+        print("  (none)")
+        return
+
+    for i in sorted(items, key=lambda x: x.get("address", "")):
+        access = [
+            p for p in ("imap", "pop3", "managesieve") if i.get(f"may_access_{p}")
+        ]
+        print(f"  {i.get('address', '?'):34} {', '.join(access) or 'send-only'}")
+
 
 if __name__ == "__main__":
     main()

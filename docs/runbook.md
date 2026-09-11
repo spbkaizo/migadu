@@ -113,6 +113,38 @@ print(a.diagnostics("example.com")) # Migadu's own DNS checks
 `diagnostics` is useful after DNS changes — it reports what Migadu sees for
 MX, SPF, DKIM and DMARC.
 
+## Give a device its own credential
+
+An identity is a per-device or per-persona credential under a mailbox — see
+[`migadu-facts.md`](migadu-facts.md#identities) for what they are. Needs only
+the admin API credentials; no mailbox password is involved.
+
+```sh
+bin/identity list user@example.com
+bin/identity add user@example.com phone --imap --generate
+```
+
+The generated password prints once. Migadu never returns it again, so record it
+before closing the terminal. Protocol access is off unless asked for, so a bare
+`add` gives a send-only identity — the right shape for a `billing@` persona,
+which needs no usable credential at all.
+
+## Revoke a device's access
+
+When a phone is lost or a credential leaks:
+
+```sh
+bin/identity revoke user@example.com phone
+```
+
+It asks you to type the full identity address, because this locks out whatever
+is using it. The parent mailbox password and every other identity keep
+working — that is the reason to hand out identities rather than the mailbox
+password in the first place.
+
+Mail that arrived through the identity stays in the parent mailbox. An identity
+is a way in, not a separate store.
+
 ## Check DNS is still correct
 
 DNS is managed elsewhere (see CLAUDE.md), but to verify what the world sees —

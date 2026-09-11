@@ -65,13 +65,91 @@ reappears on the next matching message unless a rule intercepts.
 
 ## Authentication
 
-- No "app password" concept. One mailbox password serves IMAP, SMTP, POP3 and
-  webmail. Migadu's autoconfig specifies `password-cleartext` with
-  `%EMAILADDRESS%` as the username — "cleartext" meaning inside the TLS tunnel.
+- No "app password" concept *by that name*. One mailbox password serves IMAP,
+  SMTP, POP3 and webmail. Migadu's autoconfig specifies `password-cleartext`
+  with `%EMAILADDRESS%` as the username — "cleartext" meaning inside the TLS
+  tunnel. **Identities** do provide a revocable per-device credential; see
+  below.
 - Unlike Google/Microsoft/Apple, there is no MFA-driven need for a separate
   per-application credential.
 - The **admin REST API** is different: HTTP Basic with your Migadu *account*
   email and an API key from My Account → API Keys.
+
+## Identities
+
+An identity is an address *under* a mailbox carrying its own password and its
+own per-protocol permissions. It is the feature that fills the app-password gap
+above: a credential you can revoke alone, without changing the password every
+other device is using.
+
+It is not an alias, and the two are easy to confuse:
+
+| | Alias | Identity |
+|---|---|---|
+| Scope | domain | one mailbox |
+| Endpoint | `/v1/domains/{d}/aliases` | `/v1/domains/{d}/mailboxes/{lp}/identities` |
+| Own password | no | **yes** |
+| Can log in | no | **yes** — `may_access_imap`, `may_access_pop3`, `may_access_managesieve`, each separately |
+| Can send as | no | **yes** — `may_send` |
+| Receives mail | forwards elsewhere | delivers into the parent mailbox |
+
+Read-only fields are `local_part`, `domain` and `address`. `password` is
+write-only — the API never returns it, so a generated one that is not recorded
+at creation time is gone.
+
+### `name` is required on create
+
+`POST .../identities` without a `name` fails with a bare
+`400 {"error":"bad request"}`. The response names no field, and `name` reads
+like the optional display-name field it is on every other resource.
+`migadu/admin.py` defaults it to the local part.
+
+### A password is ignored unless `password_use` says otherwise
+
+Sending `password` on create or update **is not enough**. The write returns
+200, every field reads back correctly, and the identity still has
+`password_use: "none"` — meaning no password is set and every login is
+rejected. Nothing in the response says the password was discarded.
+
+The symptom is an identity that looks perfect in the API and in the webmail
+while `Authentication failed` comes back from IMAP, which reads as a wrong
+password or a permissions mistake rather than a field you did not send.
+
+Send `password_use: "custom"` alongside it:
+
+```json
+{"password_use": "custom", "password": "..."}
+```
+
+Verified against the live API 2026-09-11. `migadu/admin.py` sets this for you
+in both `create_identity()` and `update_identity()`.
+
+Confirmed at the same time: an identity granted `may_access_imap` logs in at
+`imap.migadu.com:993` with its own address as the username and lands in the
+**parent mailbox's** INBOX — the same messages, not a separate store. The
+parent password keeps working throughout, and deleting the identity revokes
+only that credential.
+
+One more surprise on revocation: a deleted identity's login is refused with
+`[UNAVAILABLE] Backend server temporarily unavailable`, not an authentication
+error. That reads like a Migadu outage rather than a credential that no longer
+exists. Check the identity still exists before treating it as one.
+
+Two distinct uses, needing opposite settings:
+
+- **Per-device credential.** One identity per client, with only the protocols
+  that client needs. A leaked phone password is revoked by deleting that one
+  identity.
+- **Send-as persona.** Sending from `billing@` out of your own mailbox. Here
+  Migadu's guide notes "the password of the identity is irrelevant and does not
+  have to be used" — set every `may_access_*` false and the credential is
+  never a liability.
+
+Note the overlap with existing mechanisms is smaller than it looks:
+plus-addressing tags *inbound* mail and grants no sending identity; aliases
+forward and cannot authenticate, so an alias can never be the From of an
+authenticated submission. Identities are the only one of the three that yields
+a credential.
 
 ## Service endpoints
 

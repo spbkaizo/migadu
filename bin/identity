@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Manage the identities under a mailbox.
+
+    bin/identity list <mailbox>
+    bin/identity add <mailbox> <identity> [--imap] [--pop3] [--managesieve]
+    bin/identity revoke <mailbox> <identity>
+
+An identity is an address under a mailbox with its own password and its own
+per-protocol permissions. Two uses, wanting opposite settings:
+
+  per-device credential  one identity per client, with only the protocols that
+                         client needs. A leaked phone password is revoked by
+                         deleting that one identity, leaving every other device
+                         untouched.
+  send-as persona        sending from billing@ out of your own mailbox. Needs
+                         no usable password at all -- grant no protocols and
+                         the credential is never a liability.
+
+Login access is off unless asked for, so a bare `add` produces a send-only
+identity.
+
+This needs only the **admin API** credentials (MIGADU_API_USER / MIGADU_API_KEY
+or ~/.migadu-api-secret). Unlike the sieve tools it never authenticates as the
+mailbox, so no mailbox password is involved.
+"""
+
+import argparse
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from migadu import admin, mailbox, notify
+
+PROTOCOLS = ("imap", "pop3", "managesieve")
+
+
+def flags(args):
+    """Requested protocol access, as the API's field names."""
+    return {f"may_access_{p}": getattr(args, p) for p in PROTOCOLS}
+
+
+def describe(granted):
+    names = [p for p in PROTOCOLS if granted[f"may_access_{p}"]]
+    return ", ".join(names) if names else "none (send-only)"
+
+
+def cmd_list(args, a, address, local, domain):
+    try:
+        data = a.identities(domain, local)
+    except RuntimeError as e:
+        raise SystemExit(f"query failed: {e}")
+
+    items = data.get("identities", [])
+    if not items:
+        print(f"{address}: no identities")
+        return
+
+    print(f"{address}\n")
+    print(f"  {'address':34} {'send':>5} {'recv':>5}  access")
+    for i in sorted(items, key=lambda x: x.get("address", "")):
+        granted = {f"may_access_{p}": i.get(f"may_access_{p}") for p in PROTOCOLS}
+        print(
+            f"  {i.get('address', '?'):34} "
+            f"{str(i.get('may_send', '?')):>5} "
+            f"{str(i.get('may_receive', '?')):>5}  {describe(granted)}"
+        )
+
+
+def cmd_add(args, a, address, local, domain):
+    identity_address = f"{args.identity}@{domain}"
+    granted = flags(args)
+
+    if args.dry_run:
+        print(
+            f"would create {identity_address} under {address}\n"
+            f"  access  : {describe(granted)}\n"
+            f"  password: {'generated' if args.generate else 'none'}"
+        )
+        return
+
+    password = args.password
+    if args.generate:
+        password = notify.generate_password(args.length)
+
+    # Granting login access without a credential produces an identity that
+    # cannot be used for what it was just granted.
+    if any(granted.values()) and not password:
+        raise SystemExit(
+            "protocol access needs a password -- pass --generate or --password"
+        )
+
+    try:
+        a.create_identity(
+            domain,
+            local,
+            args.identity,
+            password=password,
+            name=args.name,
+            **granted,
+        )
+    except RuntimeError as e:
+        raise SystemExit(f"could not create {identity_address}: {e}")
+
+    print(f"created {identity_address}\n  access: {describe(granted)}")
+
+    if args.generate:
+        # The API never returns a password. Unrecorded here, it is unrecoverable.
+        print(
+            f"\n  password: {password}\n\n"
+            "  Migadu will not show this again. Record it now; if it is lost the\n"
+            "  only remedy is setting a new one."
+        )
+
+
+def cmd_revoke(args, a, address, local, domain):
+    identity_address = f"{args.identity}@{domain}"
+
+    try:
+        a.identity(domain, local, args.identity)
+    except RuntimeError as e:
+        raise SystemExit(f"no such identity {identity_address}: {e}")
+
+    if args.dry_run:
+        print(f"would delete {identity_address}, revoking its credential")
+        return
+
+    # This locks out whatever device is using it. Make the operator name the
+    # identity rather than confirming a bare y/n.
+    print(
+        f"This deletes {identity_address} and revokes its credential immediately.\n"
+        f"{address} and its other identities are unaffected."
+    )
+    if input(f"Type '{identity_address}' to confirm: ").strip() != identity_address:
+        raise SystemExit("aborted")
+
+    try:
+        a.delete_identity(domain, local, args.identity)
+    except RuntimeError as e:
+        raise SystemExit(f"could not delete {identity_address}: {e}")
+
+    print(f"revoked {identity_address}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="manage identities under a mailbox")
+    sub = ap.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("list", help="show the identities under a mailbox")
+    p.add_argument("mailbox", help="full address, or a local part if unambiguous")
+    p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("add", help="create an identity")
+    p.add_argument("mailbox", help="full address, or a local part if unambiguous")
+    p.add_argument("identity", help="local part of the new identity")
+    p.add_argument("--name", help="display name")
+    for proto in PROTOCOLS:
+        p.add_argument(
+            f"--{proto}", action="store_true", help=f"allow {proto.upper()} login"
+        )
+    cred = p.add_mutually_exclusive_group()
+    cred.add_argument("--generate", action="store_true", help="generate a password")
+    cred.add_argument("--password", help="set this password")
+    p.add_argument("--length", type=int, default=24)
+    p.set_defaults(func=cmd_add)
+
+    p = sub.add_parser("revoke", help="delete an identity and its credential")
+    p.add_argument("mailbox", help="full address, or a local part if unambiguous")
+    p.add_argument("identity", help="local part of the identity")
+    p.set_defaults(func=cmd_revoke)
+
+    # On the subparsers, not the top level: argparse would otherwise only
+    # accept these before the subcommand, which is not where anyone types them.
+    for name in ("add", "revoke"):
+        sub.choices[name].add_argument(
+            "--dry-run", action="store_true", help="show what would happen"
+        )
+    for name in sub.choices:
+        sub.choices[name].add_argument(
+            "--domain", help="disambiguate a bare local part"
+        )
+
+    args = ap.parse_args()
+
+    try:
+        a = admin.Admin()
+    except admin.NotConfigured as e:
+        raise SystemExit(str(e))
+
+    # Resolve against the live account, so a local part present in several
+    # domains is rejected rather than silently resolved to the wrong one.
+    try:
+        address, local, domain = mailbox.resolve(
+            args.mailbox, admin=a, default_domain=args.domain
+        )
+    except (mailbox.Ambiguous, mailbox.Unknown) as e:
+        raise SystemExit(str(e))
+
+    args.func(args, a, address, local, domain)
+
+
+if __name__ == "__main__":
+    main()
