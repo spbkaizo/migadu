@@ -28,6 +28,24 @@ This is the backlog half of the job; stopping *new* mail being filed away is a
 filter-rule change -- tag with `addflag` and `fileinto "INBOX"` instead of
 `fileinto :create "INBOX/Theme"`.
 
+## Remove leftover theme folders
+
+```sh
+bin/folder-merge you@example.com          # dry run
+bin/folder-merge you@example.com --apply  # move to Archive, delete folders
+```
+
+After the switch from filing into `INBOX/<Theme>` to tagging in place, the old
+folders linger holding whatever was already filed. The tags preserve the
+grouping, so the folders only offer somewhere to forget mail.
+
+Folders holding unread mail are skipped -- run `bin/inbox-reflow` first.
+`INBOX/system` and the IMAP specials are never touched; `INBOX/system` is where
+`bin/alert-prune` writes.
+
+Subfolders are handled deepest-first so a parent is deleted only once its
+children are gone.
+
 ## Age out machine alerts
 
 ```sh

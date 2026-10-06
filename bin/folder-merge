@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Merge leftover INBOX subfolders into Archive and remove them.
+
+    bin/folder-merge <mailbox> [--to Archive] [--apply]
+
+After switching from filing mail into INBOX/<Theme> to tagging it in place, the
+old folders linger holding whatever was already filed. The tags preserve the
+grouping, so the folders cost sidebar space and a place to forget mail without
+earning anything.
+
+This moves their contents to Archive and deletes them. Folders holding UNREAD
+mail are skipped: unread mail outside INBOX is exactly the problem the tagging
+change set out to fix, and bin/inbox-reflow is the tool for it.
+
+Protected folders are never touched -- INBOX itself, the IMAP specials, and
+INBOX/system, which bin/alert-prune writes to daily.
+
+Dry run by default. Deleting a folder cannot be undone, though the messages
+survive in --to either way.
+"""
+
+import argparse
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from migadu import creds, imap, mailbox
+
+# Never merged or deleted. INBOX/system is the alert archive bin/alert-prune
+# writes to; the rest are the IMAP special folders.
+PROTECTED = {
+    "INBOX", "INBOX/system",
+    "Archive", "Drafts", "Sent", "Junk", "Trash", "Notes",
+}
+
+BATCH = 200
+
+
+def search(M, *query):
+    """UIDs matching the query. No charset arg -- see docs/migadu-facts.md."""
+    ok, d = M.uid("SEARCH", *query)
+    return [x.decode() for x in d[0].split()] if ok == "OK" and d[0] else []
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mailbox", help="full address, or a local part if unambiguous")
+    ap.add_argument("--to", default="Archive", help="destination (default Archive)")
+    ap.add_argument("--apply", action="store_true",
+                    help="actually move and delete (default is a dry run)")
+    args = ap.parse_args()
+
+    try:
+        address, _, _ = mailbox.resolve(args.mailbox)
+    except (mailbox.Ambiguous, mailbox.Unknown) as e:
+        raise SystemExit(str(e))
+
+    user, password = creds.imap()
+    if user != address:
+        raise SystemExit(
+            f"credentials are for {user}, not {address}.\n"
+            f"Set MIGADU_USER/MIGADU_PASS for {address} to manage it."
+        )
+
+    M = imap.connect(user, password)
+    try:
+        protected = PROTECTED | {args.to}
+        folders = [f for f in imap.folders(M)
+                   if f.startswith("INBOX/") and f not in protected]
+        # Deepest first, so a parent is emptied only after its children are gone
+        # -- deleting a folder with subfolders fails or orphans them.
+        folders.sort(key=lambda f: (-f.count("/"), f))
+
+        print(f"{address}")
+        print(f"{'apply' if args.apply else 'DRY RUN -- nothing will change'}")
+        print(f"merging into {args.to}\n")
+
+        if not folders:
+            print("no leftover subfolders -- nothing to do")
+            return
+
+        moved = deleted = skipped = 0
+        for f in folders:
+            M.select(f'"{imap.utf7_encode(f)}"')
+            uids = search(M, "ALL")
+            unread = search(M, "UNSEEN")
+
+            if unread:
+                print(f"  {f:28} {len(uids):4} msgs, {len(unread)} UNREAD -- skipped")
+                print(f"  {'':28} run bin/inbox-reflow first")
+                skipped += 1
+                continue
+
+            if not args.apply:
+                action = "move + delete folder" if uids else "delete empty folder"
+                print(f"  {f:28} {len(uids):4} msgs -> {action}")
+                continue
+
+            ok = "OK"
+            if uids:
+                for i in range(0, len(uids), BATCH):
+                    chunk = ",".join(uids[i:i + BATCH])
+                    ok, _ = M.uid("MOVE", chunk, f'"{imap.utf7_encode(args.to)}"')
+                    if ok != "OK":
+                        print(f"  {f:28} move failed: {ok} -- folder kept")
+                        break
+                    moved += len(uids[i:i + BATCH])
+            if ok != "OK":
+                continue
+
+            # SELECT holds the folder open; a DELETE of the selected folder is
+            # refused by some servers.
+            M.close()
+            ok, _ = M.delete(f'"{imap.utf7_encode(f)}"')
+            if ok == "OK":
+                deleted += 1
+                print(f"  {f:28} {len(uids):4} msgs moved, folder deleted")
+            else:
+                print(f"  {f:28} {len(uids):4} msgs moved, delete failed: {ok}")
+
+        print()
+        if args.apply:
+            print(f"moved {moved} message(s), deleted {deleted} folder(s)", end="")
+            print(f", skipped {skipped}" if skipped else "")
+            M.select(f'"{imap.utf7_encode(args.to)}"', readonly=True)
+            print(f"{args.to} now holds {len(search(M, 'ALL'))}")
+        else:
+            print(f"{len(folders) - skipped} folder(s) would be merged; "
+                  f"re-run with --apply")
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()

@@ -182,6 +182,52 @@ ok, data = M.uid("FETCH", chunk, "(FLAGS)")
 
 That is how the figures above were confirmed.
 
+Even the single-criterion form is not reliable for counting across many folders
+in one session. Walking every folder and running `UID SEARCH ALL` in each
+returned an identical count for all eight -- a figure matching none of them.
+The symptom is a suspiciously uniform column.
+
+**For "how many messages are in this folder", read the `EXISTS` response that
+`SELECT` returns.** It comes from a different code path and has been correct
+every time:
+
+```python
+ok, d = M.select(f'"{utf7_encode(name)}"', readonly=True)
+count = int(d[0])          # EXISTS
+```
+
+`imap.counts()` already does this; `bin/status` is therefore trustworthy where
+an ad-hoc `SEARCH` loop is not. Treat a count that decides whether to delete
+something as needing `EXISTS` corroboration first.
+
+## Migrated mail is all the same age to IMAP
+
+`BEFORE`/`SINCE` match INTERNALDATE -- when the server received the message --
+not the `Date:` header. Mail imported in bulk therefore carries the import date,
+not the date it was sent.
+
+Measured on a mailbox holding seven months of mail, all imported in one month:
+
+| | Mar | Apr | May | Jun | Jul | Aug | Sep | Oct |
+|---|---|---|---|---|---|---|---|---|
+| `Date:` header | 143 | 188 | 257 | 232 | 204 | 144 | 429 | 180 |
+| INTERNALDATE | 0 | 0 | 0 | 0 | 0 | 0 | 1594 | 182 |
+
+So `BEFORE 06-Sep-2026` matched **nothing** in a mailbox whose oldest message
+was sent in March. Any age-based cleanup written against `BEFORE` silently does
+nothing to migrated mail while working correctly on mail that arrived live --
+which is the worst way round, since the migrated backlog is what needs it.
+
+`SENTBEFORE`/`SENTSINCE` match the `Date:` header instead. Prefer them for
+anything about how old the *mail* is; `BEFORE` answers only how long it has been
+on this server. Note `Date:` is sender-supplied and occasionally absent or
+nonsense, so a tool that must not skip anything should fall back rather than
+assume it parses.
+
+`bin/alert-prune` uses `BEFORE` deliberately: its alerts arrive live, verified
+by comparing INTERNALDATE with `Date:` across every alert in the mailbox and
+finding a zero gap on all of them.
+
 ## Authentication
 
 - No "app password" concept *by that name*. One mailbox password serves IMAP,
