@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Find unread INBOX mail that no filter rule tagged, grouped by sender.
+
+    bin/untagged <mailbox> [--all] [--limit N]
+
+The useful audit is not reading the ruleset -- it is asking what the ruleset
+missed. Sieve's `header :contains` is a plain substring test that fails
+silently, so a rule naming a domain the mail does not come from never fires and
+never errors. It looks correct forever.
+
+A sender domain appearing here in quantity is either genuinely unruled or a
+near-miss in an existing rule: the wrong TLD, a vendor's SaaS subdomain rather
+than its corporate one, or a relay-encoded form listed without the direct
+domain alongside it.
+
+Keywords are discovered from the mailbox itself, so a new tag added to
+filters.sieve needs no change here.
+"""
+
+import argparse
+import collections
+import email
+import os
+import re
+import sys
+from email.header import decode_header, make_header
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from migadu import creds, imap, mailbox
+
+BATCH = 400
+
+
+def sender_domain(raw):
+    try:
+        value = str(make_header(decode_header(str(raw or ""))))
+    except Exception:
+        value = str(raw or "")
+    m = re.search(r"[\w.+!#$%&'*/=?^`{|}~-]+@([\w.-]+)", value)
+    return m.group(1).lower().rstrip(".") if m else "(no address)"
+
+
+def keywords(M):
+    """Tags the mailbox actually uses, from the FLAGS response after SELECT.
+
+    FLAGS, not PERMANENTFLAGS: Migadu reports only the system flags plus `\\*`
+    in PERMANENTFLAGS, so the keywords in use appear solely in FLAGS.
+    """
+    found = set()
+    for line in M.response("FLAGS")[1] or []:
+        if not line:
+            continue
+        for f in line.decode(errors="replace").strip("()").split():
+            if f.startswith(("tag-", "important-")):
+                found.add(f)
+    return sorted(found)
+
+
+def search_uids(M, *query):
+    """UIDs matching the query.
+
+    Note `M.uid("SEARCH", ...)` takes no charset argument, unlike
+    `M.search(charset, ...)`. Passing None as one makes Migadu return a
+    partial result with an OK status rather than an error, which silently
+    undercounts instead of failing.
+    """
+    ok, d = M.uid("SEARCH", *query)
+    return set(d[0].split()) if ok == "OK" and d[0] else set()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mailbox", help="full address, or a local part if unambiguous")
+    ap.add_argument("--all", action="store_true",
+                    help="include read mail, not just unread")
+    ap.add_argument("--limit", type=int, default=25,
+                    help="sender domains to show (default 25)")
+    args = ap.parse_args()
+
+    try:
+        address, _, _ = mailbox.resolve(args.mailbox)
+    except (mailbox.Ambiguous, mailbox.Unknown) as e:
+        raise SystemExit(str(e))
+
+    user, password = creds.imap()
+    if user != address:
+        raise SystemExit(
+            f"credentials are for {user}, not {address}.\n"
+            f"Set MIGADU_USER/MIGADU_PASS for {address} to inspect it."
+        )
+
+    M = imap.connect(user, password)
+    try:
+        M.select("INBOX", readonly=True)
+        tags = keywords(M)
+
+        scope = "ALL" if args.all else "UNSEEN"
+        uids = search_uids(M, scope)
+        total = len(uids)
+        for kw in tags:
+            uids -= search_uids(M, "KEYWORD", kw, scope)
+
+        # A plus-address tag means the catch-all rule fired, not that a theme
+        # rule matched, so such mail is still worth reporting. Subtracting it
+        # above and adding it back here keeps the "no keyword" count honest
+        # while leaving genuinely unruled senders visible.
+
+        label = "message" if args.all else "unread message"
+        print(f"{address}")
+        print(f"{len(tags)} keyword(s) in use: {', '.join(tags) or '(none)'}")
+        print(f"{len(uids)} of {total} {label}(s) carry no keyword\n")
+        if not uids:
+            print("nothing untagged -- every message matched a rule")
+            return
+
+        counts = collections.Counter()
+        ordered = sorted(uids, key=lambda x: int(x))
+        for i in range(0, len(ordered), BATCH):
+            chunk = b",".join(ordered[i:i + BATCH]).decode()
+            ok, data = M.uid("FETCH", chunk,
+                             "(BODY.PEEK[HEADER.FIELDS (FROM)])")
+            if ok != "OK":
+                continue
+            for part in data:
+                if isinstance(part, tuple):
+                    msg = email.message_from_bytes(part[1])
+                    counts[sender_domain(msg.get("From"))] += 1
+
+        print(f"{'sender domain':44} {'count':>5}")
+        for dom, n in counts.most_common(args.limit):
+            print(f"  {dom:42} {n:>5}")
+        shown = sum(n for _, n in counts.most_common(args.limit))
+        if len(counts) > args.limit:
+            print(f"\n  ... {len(counts) - args.limit} more domain(s), "
+                  f"{len(uids) - shown} message(s)")
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()

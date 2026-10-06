@@ -28,6 +28,21 @@ This is the backlog half of the job; stopping *new* mail being filed away is a
 filter-rule change -- tag with `addflag` and `fileinto "INBOX"` instead of
 `fileinto :create "INBOX/Theme"`.
 
+## Audit for rules that stopped matching
+
+```sh
+bin/untagged you@example.com
+```
+
+Lists unread INBOX mail carrying none of the expected keywords, grouped by
+sender domain. A domain appearing in quantity is either a sender with no rule
+or -- more often -- a near-miss in a rule that looks correct: the wrong TLD, a
+vendor's SaaS subdomain instead of its corporate one, or a relay-encoded form
+listed without the direct domain. Reading the ruleset does not reveal these,
+because `header :contains` fails silently; see `docs/migadu-facts.md`.
+
+Worth running every few months, and after any sender changes how it sends.
+
 ## Change filter rules
 
 ```sh

@@ -110,6 +110,78 @@ For the backlog already filed away, `bin/inbox-reflow` tags unread messages and
 moves them back to INBOX. It leaves read mail and the folders themselves alone,
 and dry-runs by default.
 
+## A rule that nearly matches is silently dead
+
+Sieve `header :contains` is a plain substring test with no feedback. A rule
+listing a domain the mail does not actually come from never fires, never errors
+and never appears in any status output -- it simply does nothing, and the mail
+lands untagged as though no rule existed.
+
+Three real cases found in one mailbox, each a rule that had looked correct for
+months:
+
+| Rule listed | Mail actually came from |
+|---|---|
+| `@members.ebay.co.uk` | `members.ebay.com` |
+| `@grafana.com` | `<instance>.grafana.net` (self-hosted) |
+| `_substack_com_` (relay form only) | `substack.com` direct |
+
+The pattern: a ccTLD assumed from a UK-facing brand, a vendor's SaaS subdomain
+rather than its corporate one, and a relay-encoded form listed without the
+direct form alongside it. The self-hosted case is the easiest to miss, since
+the brand name is right there in the rule.
+
+Audit by asking what is *not* tagged rather than by reading the rules, which is
+the check that finds this:
+
+```
+SEARCH UNSEEN            # then subtract each KEYWORD you expect
+```
+
+Group the remainder by sender domain. A domain appearing in quantity with no
+keyword is either a missing rule or a near-miss in an existing one. Reading the
+ruleset will not show it, because the rule looks right.
+
+## UID SEARCH with a charset argument silently under-returns
+
+`imaplib`'s two search methods differ in signature, and the difference is easy
+to miss because only one of them errors:
+
+```python
+M.search(None, "UNSEEN")          # charset first -- correct
+M.uid("SEARCH", None, "UNSEEN")   # WRONG: None is sent as a search argument
+M.uid("SEARCH", "UNSEEN")         # correct
+```
+
+`uid()` takes no charset, so the `None` goes to the server as part of the
+command. Migadu answers `OK` with a **partial** result set rather than `BAD`:
+observed returning 0 UIDs where 401 messages matched, and on a smaller folder
+returning the correct set, which is what makes this survive testing.
+
+The failure mode is a script that selects too few messages and reports success.
+Anything that subtracts one search from another -- "which messages have no
+keyword" -- then over-reports the remainder instead of crashing.
+
+Verified against the live server 2026-10-06. Both `bin/untagged` and
+`bin/inbox-reflow` use the no-charset form.
+
+The same charset argument corrupts sequence-number `SEARCH` with multiple
+criteria. `M.search(None, "KEYWORD", "tag-x")` was observed returning an
+identical count for *every* keyword tried, including ones no message carried --
+fetching those messages showed none had the flag. Single-criterion
+`M.search(None, "UNSEEN")` is fine, which is what makes the broken form look
+plausible.
+
+Trust `M.uid("SEARCH", ...)` without a charset. When a count has to be right,
+verify it by fetching `(FLAGS)` per message and reading the keywords, which
+cannot be fudged by the search implementation:
+
+```python
+ok, data = M.uid("FETCH", chunk, "(FLAGS)")
+```
+
+That is how the figures above were confirmed.
+
 ## Authentication
 
 - No "app password" concept *by that name*. One mailbox password serves IMAP,

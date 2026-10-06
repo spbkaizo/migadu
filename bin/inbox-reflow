@@ -54,7 +54,10 @@ def unseen(M, folder):
         return None
     if ok != "OK":
         return None
-    ok, data = M.uid("SEARCH", None, "UNSEEN")
+    # No charset argument here: M.uid("SEARCH", ...) does not take one, and
+    # passing None makes Migadu return a partial result with an OK status --
+    # silently selecting too few messages rather than failing.
+    ok, data = M.uid("SEARCH", "UNSEEN")
     if ok != "OK" or not data or not data[0]:
         return []
     return data[0].split()
