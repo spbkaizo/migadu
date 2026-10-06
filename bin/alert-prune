@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Move machine-generated alerts out of INBOX once they are old enough.
+
+    bin/alert-prune <mailbox> [--days N] [--apply] [--to FOLDER]
+
+Monitoring mail is useful while it is current and clutter afterwards: a FIRING
+alert matched by its RESOLVED an hour later needs no further attention, but
+hundreds of them bury everything else. This moves anything older than --days
+(default 30) into INBOX/system, where it stays searchable.
+
+It moves rather than deletes. A question like "when did that link first flap?"
+is answerable afterwards, and an alert archive costs nothing but space.
+
+Dry run by default, because it mutates a live mailbox.
+
+Senders are matched on a substring of the From header, the same way the Sieve
+rules match. They are listed one per line in
+mailboxes/<address>/alert-senders, which is gitignored along with the rest of
+the mailbox directory -- nothing is hardcoded to a domain.
+"""
+
+import argparse
+import datetime
+import email
+import email.utils
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from migadu import creds, imap, mailbox
+
+DEST = "INBOX/system"
+BATCH = 200
+
+# Alert sources are per-mailbox and name real infrastructure, so they live
+# beside the mailbox's filter rules rather than in this file -- same reason
+# filters.sieve is gitignored.
+SENDERS_FILE = "alert-senders"
+
+
+def senders(address):
+    """From-header substrings identifying alert mail, one per line.
+
+    Read from mailboxes/<address>/alert-senders. Blank lines and # comments are
+    ignored. Returns [] when the file is absent, which makes the tool a no-op
+    rather than a surprise.
+    """
+    path = os.path.join(ROOT, "mailboxes", address, SENDERS_FILE)
+    if not os.path.exists(path):
+        return []
+    out = []
+    with open(path) as fh:
+        for line in fh:
+            line = line.split("#", 1)[0].strip()
+            if line:
+                out.append(line)
+    return out
+
+
+def search(M, *query):
+    """UIDs matching the query.
+
+    No charset argument: M.uid("SEARCH", ...) does not take one, and passing
+    None makes Migadu return a partial result with an OK status rather than an
+    error -- silently selecting too few messages. See docs/migadu-facts.md.
+    """
+    ok, d = M.uid("SEARCH", *query)
+    return [x.decode() for x in d[0].split()] if ok == "OK" and d[0] else []
+
+
+def imap_date(d):
+    """IMAP date literal, e.g. 06-Sep-2026. Locale-independent by construction."""
+    months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    return f"{d.day:02d}-{months[d.month - 1]}-{d.year}"
+
+
+def oldest(M, uids):
+    """Date of the oldest message in uids, for reporting. None if unreadable."""
+    if not uids:
+        return None
+    found = []
+    for i in range(0, len(uids), BATCH):
+        ok, data = M.uid("FETCH", ",".join(uids[i:i + BATCH]),
+                         "(BODY.PEEK[HEADER.FIELDS (DATE)])")
+        if ok != "OK":
+            continue
+        for part in data:
+            if isinstance(part, tuple):
+                raw = email.message_from_bytes(part[1]).get("Date")
+                try:
+                    found.append(email.utils.parsedate_to_datetime(raw).date())
+                except Exception:
+                    pass
+    return min(found) if found else None
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mailbox", help="full address, or a local part if unambiguous")
+    ap.add_argument("--days", type=int, default=30,
+                    help="move alerts older than this many days (default 30)")
+    ap.add_argument("--to", default=DEST, help=f"destination folder (default {DEST})")
+    ap.add_argument("--apply", action="store_true",
+                    help="actually move mail (default is a dry run)")
+    args = ap.parse_args()
+
+    if args.days < 1:
+        raise SystemExit("--days must be at least 1")
+
+    try:
+        address, _, _ = mailbox.resolve(args.mailbox)
+    except (mailbox.Ambiguous, mailbox.Unknown) as e:
+        raise SystemExit(str(e))
+
+    user, password = creds.imap()
+    if user != address:
+        raise SystemExit(
+            f"credentials are for {user}, not {address}.\n"
+            f"Set MIGADU_USER/MIGADU_PASS for {address} to manage it."
+        )
+
+    patterns = senders(address)
+    if not patterns:
+        raise SystemExit(
+            f"no alert senders configured for {address}.\n"
+            f"List them one per line in "
+            f"mailboxes/{address}/{SENDERS_FILE} -- e.g. a monitoring\n"
+            f"host or an alerts@ address, matched as a substring of From."
+        )
+
+    cutoff = datetime.date.today() - datetime.timedelta(days=args.days)
+    before = imap_date(cutoff)
+
+    M = imap.connect(user, password)
+    try:
+        # The destination must exist before a COPY, and :create in Sieve only
+        # covers mail arriving through a rule.
+        if args.apply and args.to not in imap.folders(M):
+            ok, _ = M.create(f'"{imap.utf7_encode(args.to)}"')
+            print(f"created {args.to}: {ok}")
+
+        M.select("INBOX")
+        has_move = any(b"MOVE" == c for c in M.capabilities)
+
+        print(f"{address}")
+        print(f"{'apply' if args.apply else 'DRY RUN -- nothing will move'}")
+        print(f"moving alerts dated before {before} "
+              f"({args.days} days) into {args.to}\n")
+
+        total = 0
+        for pat in patterns:
+            everything = search(M, "FROM", pat)
+            uids = search(M, "FROM", pat, "BEFORE", before)
+            if not everything:
+                print(f"  {pat:20} no mail from this sender")
+                continue
+            if not uids:
+                old = oldest(M, everything)
+                age = f", oldest {old}" if old else ""
+                print(f"  {pat:20} {len(everything):4} in INBOX, none older "
+                      f"than {args.days}d{age}")
+                continue
+
+            total += len(uids)
+            print(f"  {pat:20} {len(uids):4} of {len(everything)} older "
+                  f"than {args.days}d")
+            if not args.apply:
+                continue
+
+            moved = 0
+            for i in range(0, len(uids), BATCH):
+                chunk = ",".join(uids[i:i + BATCH])
+                if has_move:
+                    ok, _ = M.uid("MOVE", chunk, f'"{imap.utf7_encode(args.to)}"')
+                else:
+                    ok, _ = M.uid("COPY", chunk, f'"{imap.utf7_encode(args.to)}"')
+                    if ok == "OK":
+                        M.uid("STORE", chunk, "+FLAGS", r"(\Deleted)")
+                        M.expunge()
+                if ok == "OK":
+                    moved += len(uids[i:i + BATCH])
+                else:
+                    print(f"  {'':20} batch failed: {ok}")
+            print(f"  {'':20} -> moved {moved}")
+
+        print()
+        if total == 0:
+            print(f"nothing older than {args.days} days -- INBOX is already current")
+        elif args.apply:
+            print(f"moved {total} alert(s) into {args.to}")
+        else:
+            print(f"{total} alert(s) would move; re-run with --apply")
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()

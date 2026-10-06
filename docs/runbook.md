@@ -28,6 +28,44 @@ This is the backlog half of the job; stopping *new* mail being filed away is a
 filter-rule change -- tag with `addflag` and `fileinto "INBOX"` instead of
 `fileinto :create "INBOX/Theme"`.
 
+## Age out machine alerts
+
+```sh
+bin/alert-prune you@example.com                  # dry run (default)
+bin/alert-prune you@example.com --apply          # move
+bin/alert-prune you@example.com --days 7 --apply # shorter window
+```
+
+Moves alerts older than `--days` (default 30) from INBOX into `INBOX/system`.
+Moves rather than deletes, so "when did that first flap?" stays answerable.
+Senders are listed in `SENDERS` at the top of the script -- add alert sources
+there.
+
+A dry run reporting `none older than 30d` prints the oldest message's date
+alongside it, so a zero is distinguishable from a broken query.
+
+### Daily schedule
+
+A launchd agent runs it at 03:17 daily:
+
+```sh
+~/Library/LaunchAgents/com.migadu-tools.alert-prune.plist
+```
+
+Credentials come from `~/.migadu-secret`, so no secret appears in the plist.
+It needs the Mac awake; launchd runs a missed job once on wake.
+
+```sh
+launchctl list | grep alert-prune                      # registered? exit status?
+launchctl kickstart -k "gui/$(id -u)/com.migadu-tools.alert-prune"   # run now
+tail alert-prune.log                                   # what it did (gitignored)
+launchctl unload ~/Library/LaunchAgents/com.migadu-tools.alert-prune.plist
+```
+
+Note the full path to `python3` in the plist: launchd runs with a minimal PATH
+that excludes Homebrew, so a bare `python3` fails there while working in a
+shell.
+
 ## Audit for rules that stopped matching
 
 ```sh

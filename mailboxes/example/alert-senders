@@ -1,0 +1,11 @@
+# Machine alert sources for bin/alert-prune, one per line.
+#
+# Each line is matched as a substring of the From header, case-insensitively,
+# the same way the Sieve rules match. Mail from these senders is moved out of
+# INBOX into INBOX/system once it is older than --days (default 30).
+#
+# Copy this file to mailboxes/<your-mailbox>/alert-senders and list your own
+# monitoring sources. Blank lines and # comments are ignored.
+#
+# monitoring.example.com
+# alerts@example.com

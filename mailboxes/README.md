@@ -1,8 +1,14 @@
 # Mailbox configuration
 
-One directory per mailbox, containing `filters.sieve`. **Directories are named
-for the full address**, because the account hosts several domains and a local
-part such as `admin` usually exists in all of them.
+One directory per mailbox, containing:
+
+| File | Purpose |
+|---|---|
+| `filters.sieve` | the Sieve rules pushed to the server |
+| `alert-senders` | From substrings `bin/alert-prune` ages out of INBOX |
+
+**Directories are named for the full address**, because the account hosts
+several domains and a local part such as `admin` usually exists in all of them.
 
 - `example/` — starter rules, documented. Copy it to begin.
 - `<user>@<domain>/` — a live configuration. Gitignored: real rules name real
