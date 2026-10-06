@@ -6,8 +6,27 @@
 bin/status
 ```
 
-Folders with message counts, which Sieve script is active, and domain storage
-usage if the admin API is configured.
+Folders with message and unread counts, which Sieve script is active, and
+domain storage usage if the admin API is configured.
+
+Any folder other than INBOX, Junk or Trash holding unread mail is flagged
+`<-- hidden`, with a total at the end of the list. That mail may need a reply
+but will not be seen unless the folder is opened, which is the failure mode
+subject folders invite -- see `docs/migadu-facts.md`.
+
+## Bring hidden mail back to INBOX
+
+```sh
+bin/inbox-reflow you@example.com          # dry run, shows what would move
+bin/inbox-reflow you@example.com --apply  # tag and move
+```
+
+Tags each unread message with the keyword its folder implies and moves it to
+INBOX. Read mail and the folders themselves are left alone. Dry-run by default.
+
+This is the backlog half of the job; stopping *new* mail being filed away is a
+filter-rule change -- tag with `addflag` and `fileinto "INBOX"` instead of
+`fileinto :create "INBOX/Theme"`.
 
 ## Change filter rules
 

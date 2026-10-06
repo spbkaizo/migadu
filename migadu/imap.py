@@ -113,3 +113,24 @@ def counts(M, names=None):
         except imaplib.IMAP4.error:
             out[name] = None
     return out
+
+
+def unread(M, names=None):
+    """{folder: unread_count}. Selects read-only, so nothing is modified.
+
+    Worth reporting alongside counts(): a folder's total says nothing about
+    whether it is hiding mail that still needs attention, and unread mail
+    filed out of INBOX is invisible until someone goes looking for it.
+    """
+    out = {}
+    for name in names if names is not None else folders(M):
+        try:
+            ok, _ = M.select(f'"{utf7_encode(name)}"', readonly=True)
+            if ok != "OK":
+                out[name] = None
+                continue
+            ok, d = M.search(None, "UNSEEN")
+            out[name] = len(d[0].split()) if ok == "OK" and d[0] else 0
+        except imaplib.IMAP4.error:
+            out[name] = None
+    return out

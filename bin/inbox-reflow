@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Move unread mail out of theme subfolders and back into INBOX, tagged.
+
+    bin/inbox-reflow <mailbox>            # dry run (default)
+    bin/inbox-reflow <mailbox> --apply    # actually move
+
+Companion to the "tag, don't file" filter rules. Those change where *new* mail
+lands; this deals with the backlog already filed away, which is otherwise
+invisible until each folder is opened in turn.
+
+Only UNSEEN messages move. Mail already read is settled history and is left
+where it is -- moving it would churn the mailbox for no gain. The emptied
+folders are left in place for the same reason.
+
+Each message gets the keyword its folder implies (INBOX/Tech -> tag-tech), so
+a saved search on that keyword shows exactly what the folder used to.
+
+Dry run is the default because this mutates a live mailbox.
+"""
+
+import argparse
+import imaplib
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from migadu import creds, imap, mailbox
+
+# Folder -> keyword. Mirrors pass 3 of filters.sieve. INBOX/system is absent
+# deliberately: those alerts are filed and marked read on purpose.
+THEMES = {
+    "INBOX/School":            "tag-school",
+    "INBOX/News":              "tag-news",
+    "INBOX/Health":            "tag-health",
+    "INBOX/Finance/Pension":   "tag-pension",
+    "INBOX/Finance/Investing": "tag-investing",
+    "INBOX/Finance/Banking":   "tag-banking",
+    "INBOX/Shopping":          "tag-shopping",
+    "INBOX/Motoring":          "tag-motoring",
+    "INBOX/Travel":            "tag-travel",
+    "INBOX/Utilities":         "tag-utilities",
+    "INBOX/Social":            "tag-social",
+    "INBOX/Tech":              "tag-tech",
+}
+
+
+def unseen(M, folder):
+    """UIDs of unread messages in folder, or None if it cannot be selected."""
+    try:
+        ok, _ = M.select(f'"{imap.utf7_encode(folder)}"')
+    except imaplib.IMAP4.error:
+        return None
+    if ok != "OK":
+        return None
+    ok, data = M.uid("SEARCH", None, "UNSEEN")
+    if ok != "OK" or not data or not data[0]:
+        return []
+    return data[0].split()
+
+
+def reflow(M, folder, keyword, has_move, apply):
+    """Tag and move folder's unread mail to INBOX. Returns the count."""
+    uids = unseen(M, folder)
+    if uids is None:
+        print(f"  {folder:26} -- no such folder, skipped")
+        return 0
+    if not uids:
+        print(f"  {folder:26}     0 unread")
+        return 0
+
+    n = len(uids)
+    if not apply:
+        print(f"  {folder:26} {n:5} unread -> INBOX, +{keyword}")
+        return n
+
+    ids = b",".join(uids).decode()
+
+    # Tag before moving: after a MOVE the UIDs belong to INBOX, not here.
+    ok, _ = M.uid("STORE", ids, "+FLAGS", f"({keyword})")
+    if ok != "OK":
+        print(f"  {folder:26} -- STORE failed, skipped")
+        return 0
+
+    if has_move:
+        ok, _ = M.uid("MOVE", ids, "INBOX")
+        if ok != "OK":
+            print(f"  {folder:26} -- MOVE failed, skipped")
+            return 0
+    else:
+        ok, _ = M.uid("COPY", ids, "INBOX")
+        if ok != "OK":
+            print(f"  {folder:26} -- COPY failed, skipped")
+            return 0
+        M.uid("STORE", ids, "+FLAGS", r"(\Deleted)")
+        M.expunge()
+
+    print(f"  {folder:26} {n:5} moved to INBOX, +{keyword}")
+    return n
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mailbox", help="full address, or a local part if unambiguous")
+    ap.add_argument("--apply", action="store_true",
+                    help="actually move mail (default is a dry run)")
+    args = ap.parse_args()
+
+    try:
+        address, _, _ = mailbox.resolve(args.mailbox)
+    except (mailbox.Ambiguous, mailbox.Unknown) as e:
+        raise SystemExit(str(e))
+
+    user, password = creds.imap()
+    if user != address:
+        raise SystemExit(
+            f"credentials are for {user}, not {address}.\n"
+            f"Set MIGADU_USER/MIGADU_PASS for {address} to manage it."
+        )
+
+    M = imap.connect(user, password)
+    try:
+        has_move = any(b"MOVE" == c for c in M.capabilities)
+
+        before = imap.counts(M, ["INBOX"]).get("INBOX")
+        print(f"{address}")
+        print(f"{'apply' if args.apply else 'DRY RUN -- nothing will move'}\n")
+
+        total = 0
+        for folder, keyword in THEMES.items():
+            total += reflow(M, folder, keyword, has_move, args.apply)
+
+        print()
+        if args.apply:
+            after = imap.counts(M, ["INBOX"]).get("INBOX")
+            print(f"moved {total} messages; INBOX {before} -> {after}")
+        else:
+            print(f"{total} messages would move into INBOX ({before} now)")
+            print("re-run with --apply to do it")
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()

@@ -195,13 +195,49 @@ contacts.
 
 ---
 
-## Your folders
+## Finding mail without folders
 
-You may see folders you did not create, such as **Archive**, **Junk** or
-folders grouping mail by subject. These are normal. Mail is sorted into them
-automatically as it arrives.
+All your mail arrives in the **Inbox**. Nothing is filed away into a subject
+folder, so there is only one place to look.
 
-Anything important stays in your **Inbox**.
+Instead of moving mail out of sight, each message is labelled with a keyword
+as it arrives -- `tag-shopping`, `tag-tech`, `tag-travel` and so on. The
+grouping is still there; it just does not hide anything.
+
+You will still see **Archive**, **Junk**, **Sent** and **Trash**, which are
+normal, plus some older subject folders kept for history.
+
+### Seeing a keyword as if it were a folder
+
+Most mail apps can show a saved search in the sidebar, where it looks and
+behaves like a folder -- except the mail never leaves your Inbox.
+
+**Apple Mail (Mac)**
+Mailbox -> New Smart Mailbox. Name it "Shopping", then set the condition to
+**Message contains keyword** `tag-shopping`. Repeat per keyword you want.
+
+**Thunderbird**
+Right-click your account -> New Saved Search Folder. Name it, then set the
+condition to **Tag** -> **is** -> the tag you want. Thunderbird shows keywords
+as tags and lets you colour them.
+
+**iPhone and iPad**
+Apple Mail on iOS cannot make saved searches. Use the search box and type the
+keyword, or set up Smart Mailboxes on a Mac -- they sync to your phone.
+
+**Anything else**
+Search for `KEYWORD tag-shopping`. Any IMAP client can do this even without a
+saved-search feature.
+
+**Webmail**
+https://webmail.migadu.com can search keywords but cannot save the search, so
+set these up in your own mail app.
+
+### Quiet mail
+
+Newsletters and social notifications arrive already marked as read. They are
+in your Inbox and searchable, but they do not add to your unread count, so
+that count stays a list of things that may actually need you.
 
 ---
 

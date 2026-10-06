@@ -24,6 +24,7 @@ def main():
     M = imap.connect(user, password)
     try:
         cnt = imap.counts(M)
+        uns = imap.unread(M)
     finally:
         try:
             M.logout()
@@ -31,8 +32,23 @@ def main():
             pass
 
     print("FOLDERS")
+    print(f"  {'':34} {'total':>7} {'unread':>7}")
+    hidden = 0
     for name in sorted(cnt, key=lambda x: (x != "INBOX", x)):
-        print(f"  {name:34} {cnt[name] if cnt[name] is not None else '-':>7}")
+        total = cnt[name] if cnt[name] is not None else "-"
+        u = uns.get(name)
+        # Unread mail outside INBOX is the case worth seeing: it is mail that
+        # may need attention but will not be noticed unless the folder is
+        # opened. Junk and Trash are excluded -- unread there is expected.
+        flag = ""
+        if u and name not in ("INBOX", "Junk", "Trash"):
+            hidden += u
+            flag = "  <-- hidden"
+        print(f"  {name:34} {total:>7} {u if u is not None else '-':>7}{flag}")
+
+    if hidden:
+        print(f"\n  {hidden} unread message(s) sit outside INBOX and are easy to miss.")
+        print("  bin/inbox-reflow <mailbox> tags them and moves them to INBOX.")
 
     print("\nFILTERS")
     s = sieve.Sieve()

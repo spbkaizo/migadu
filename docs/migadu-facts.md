@@ -63,6 +63,53 @@ reappears on the next matching message unless a rule intercepts.
 **Each envelope recipient is processed separately.** Mail addressed to both
 `user@` and `user+tag@` delivers **two** copies, one tagged and one not.
 
+## Filing mail into folders hides it
+
+Not a Migadu quirk -- a design finding, recorded because the measurement was
+the surprising part.
+
+A mailbox filing incoming mail into eleven `INBOX/<Theme>` folders was measured
+before changing it:
+
+| Location | Unread |
+|---|---|
+| INBOX | 111 |
+| eleven theme subfolders | 170 |
+
+**More unread mail was hidden than visible.** Filing does not reduce the
+amount to deal with, it splits it across places that must each be remembered
+and opened. Nothing in any status output makes that obvious, because per-folder
+unread counts are only visible if you go looking for them.
+
+The alternative costs nothing extra in Sieve. Replace
+
+```sieve
+fileinto :create "INBOX/Tech";
+```
+
+with
+
+```sieve
+addflag "tag-tech";
+fileinto "INBOX";
+```
+
+The grouping survives as an IMAP keyword, searchable as `KEYWORD tag-tech` and
+usable as a saved search or smart mailbox that looks like a folder in the
+client. Mail stays in one place.
+
+Two details worth keeping:
+
+- Tag known noise (newsletters, social) with `addflag "\\Seen"` as well, so it
+  lands silently. Without this, collapsing folders into INBOX just moves the
+  pile rather than shrinking it, and the unread count stops meaning anything.
+- Genuine fire-and-forget alerts are the one case where filing away *is*
+  right -- they are never acted on individually.
+
+For the backlog already filed away, `bin/inbox-reflow` tags unread messages and
+moves them back to INBOX. It leaves read mail and the folders themselves alone,
+and dry-runs by default.
+
 ## Authentication
 
 - No "app password" concept *by that name*. One mailbox password serves IMAP,
