@@ -315,6 +315,20 @@ is not a setup delay. The identity had `may_send: true`, and there is no
 `may_access_smtp` flag to grant alongside the IMAP, POP3 and ManageSieve ones.
 Verified 2026-11-12 on two identities in different domains.
 
+It is not something the API leaves out, either. Ruled out on the same day,
+each against an identity whose password worked for IMAP:
+
+- **Made in the admin UI** with "Use custom password" and every protocol
+  enabled: same `535`. Its fields match an API-made identity except for the
+  extra POP3/ManageSieve flags.
+- **Password reset** through `update_identity()` after creation: same `535`.
+- **Login mechanism:** SMTP offers `PLAIN` and `LOGIN`, and both are refused.
+
+This contradicts the admin UI, which describes "Use custom password" as an
+"application specific password (e.g. your phone)" for which "sending
+identities are implied". Raised with Migadu support; until they answer, treat
+it as unsupported.
+
 So a device's outgoing server still needs the **parent mailbox password**.
 An identity limits what a lost device exposes on the read side only: if
 that device also held the parent password for SMTP, revoking the identity is
