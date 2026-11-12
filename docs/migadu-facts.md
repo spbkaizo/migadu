@@ -233,9 +233,8 @@ finding a zero gap on all of them.
 - No "app password" concept *by that name*. One mailbox password serves IMAP,
   SMTP, POP3 and webmail. Migadu's autoconfig specifies `password-cleartext`
   with `%EMAILADDRESS%` as the username — "cleartext" meaning inside the TLS
-  tunnel. **Identities** do provide a revocable per-device credential, but
-  for reading mail only — their passwords do not authenticate SMTP. See
-  below.
+  tunnel. **Identities** do provide a revocable per-device credential, for
+  sending as well as reading; see below.
 - Unlike Google/Microsoft/Apple, there is no MFA-driven need for a separate
   per-application credential.
 - The **admin REST API** is different: HTTP Basic with your Migadu *account*
@@ -301,45 +300,37 @@ One more surprise on revocation: a deleted identity's login is refused with
 error. That reads like a Migadu outage rather than a credential that no longer
 exists. Check the identity still exists before treating it as one.
 
-### An identity's password does not authenticate SMTP
+### SMTP: identity passwords work, but a refusal can be Migadu's side
 
-The same credential that logs in to IMAP is refused by submission at
-`smtp.migadu.com`, on both 465 and 587:
+An identity with `password_use: "custom"` authenticates SMTP submission at
+`smtp.migadu.com` with its own address and password, so one identity covers a
+phone's incoming and outgoing servers. There is no `may_access_smtp` flag;
+`may_send` defaults to true and is all it needs.
+
+On 2026-11-12, though, every identity — made in the admin UI or through the
+API, with or without a password reset — logged in to IMAP fine while SMTP
+refused it:
 
 ```
 535 5.7.8 Authentication credentials invalid
 ```
 
-It is still refused several minutes after the identity was created, so this
-is not a setup delay. The identity had `may_send: true`, and there is no
-`may_access_smtp` flag to grant alongside the IMAP, POP3 and ManageSieve ones.
-Verified 2026-11-12 on two identities in different domains.
+Migadu support put this down to a brief connectivity issue on their side, and
+afterwards an identity that had been refused authenticated (`235`). One
+identity in another domain was still refused after the fix and was left with
+support.
 
-It is not something the API leaves out, either. Ruled out on the same day,
-each against an identity whose password worked for IMAP:
-
-- **Made in the admin UI** with "Use custom password" and every protocol
-  enabled: same `535`. Its fields match an API-made identity except for the
-  extra POP3/ManageSieve flags.
-- **Password reset** through `update_identity()` after creation: same `535`.
-- **Login mechanism:** SMTP offers `PLAIN` and `LOGIN`, and both are refused.
-
-This contradicts the admin UI, which describes "Use custom password" as an
-"application specific password (e.g. your phone)" for which "sending
-identities are implied". Raised with Migadu support; until they answer, treat
-it as unsupported.
-
-So a device's outgoing server still needs the **parent mailbox password**.
-An identity limits what a lost device exposes on the read side only: if
-that device also held the parent password for SMTP, revoking the identity is
-not enough, and the parent password must change too.
+So a `535` from SMTP for an identity whose password works on IMAP is not a
+wrong password and not a missing API field. Don't send the parent password
+to work around it: stop retrying (after several failures one
+attempt drew `454 4.7.0 temporary authentication failure`), and report it to
+Migadu support.
 
 Two distinct uses, needing opposite settings:
 
 - **Per-device credential.** One identity per client, with only the protocols
   that client needs. A leaked phone password is revoked by deleting that one
-  identity. Covers IMAP, POP3 and ManageSieve only — sending still needs the
-  parent password (see above).
+  identity.
 - **Send-as persona.** Sending from `billing@` out of your own mailbox. Here
   Migadu's guide notes "the password of the identity is irrelevant and does not
   have to be used" — set every `may_access_*` false and the credential is
