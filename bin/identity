@@ -11,7 +11,8 @@ per-protocol permissions. Two uses, wanting opposite settings:
   per-device credential  one identity per client, with only the protocols that
                          client needs. A leaked phone password is revoked by
                          deleting that one identity, leaving every other device
-                         untouched.
+                         untouched. Read access only: SMTP refuses identity
+                         passwords, so sending still needs the parent password.
   send-as persona        sending from billing@ out of your own mailbox. Needs
                          no usable password at all -- grant no protocols and
                          the credential is never a liability.

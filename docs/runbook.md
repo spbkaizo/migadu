@@ -219,6 +219,11 @@ before closing the terminal. Protocol access is off unless asked for, so a bare
 `add` gives a send-only identity — the right shape for a `billing@` persona,
 which needs no usable credential at all.
 
+The identity covers reading only. Its password is refused by SMTP (see
+[`migadu-facts.md`](migadu-facts.md#an-identitys-password-does-not-authenticate-smtp)),
+so on the phone set the incoming server to the identity and the outgoing server
+to the parent mailbox address and password.
+
 ## Revoke a device's access
 
 When a phone is lost or a credential leaks:
@@ -231,6 +236,9 @@ It asks you to type the full identity address, because this locks out whatever
 is using it. The parent mailbox password and every other identity keep
 working — that is the reason to hand out identities rather than the mailbox
 password in the first place.
+
+If the device also held the parent password for sending, change that too —
+revoking the identity does not touch it.
 
 Mail that arrived through the identity stays in the parent mailbox. An identity
 is a way in, not a separate store.
